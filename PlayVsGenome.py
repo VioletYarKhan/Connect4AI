@@ -61,7 +61,7 @@ def get_move_from_net(net, board, player_char):
     return random.choice(valid_columns)
 
 def print_board(board):
-    print("\n 0  1  2  3  4  5  6")
+    print("\n0  1   2   3   4   5   6")
     for row in board:
         print(" | ".join(row))
     print("-" * 29)
@@ -102,7 +102,7 @@ def play_against_genome(config_path, genome_path):
                     else:
                         print("Invalid column or full. Try again.")
                 except ValueError:
-                    print("Invalid input. Enter a number 0–6.")
+                    print("Invalid input. Enter a number 0-6.")
             add_piece(board, col, player_char)
         else:
             col = get_move_from_net(net, board, ai_char)

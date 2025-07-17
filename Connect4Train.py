@@ -95,20 +95,24 @@ def eval_genomes(genomes, config):
                 result = play_game_with_nets(net1, net2)  # net1 = X, net2 = O
                 if result == "X":
                     genome1.fitness += 1
+                    genome2.fitness -= 0.5
                 elif result == "O":
                     genome2.fitness += 1
+                    genome1.fitness -= 0.5
                 else:
-                    genome1.fitness += 0.5
-                    genome2.fitness += 0.5
+                    genome1.fitness += 0.25
+                    genome2.fitness += 0.25
             else:
                 result = play_game_with_nets(net2, net1)  # net2 = X, net1 = O
                 if result == "X":
                     genome2.fitness += 1
+                    genome1.fitness -= 0.5
                 elif result == "O":
                     genome1.fitness += 1
+                    genome2.fitness -= 0.5
                 else:
-                    genome1.fitness += 0.5
-                    genome2.fitness += 0.5
+                    genome1.fitness += 0.25
+                    genome2.fitness += 0.25
 
 def run_neat(config_path):
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
