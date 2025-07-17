@@ -8,11 +8,7 @@ from mpi4py import MPI
 
 ROWS = 6
 COLS = 7
-
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-size = comm.Get_size()
-
+TOURNAMENT_MATCHES = 5  # matches per genome
 
 def create_board():
     return [[" " for _ in range(COLS)] for _ in range(ROWS)]
@@ -84,52 +80,81 @@ def play_game_with_nets(net1, net2):
             return "draw"
         turn += 1
 
+def evaluate_genome_pair(genome1, genome2, config):
+    net1 = neat.nn.FeedForwardNetwork.create(genome1, config)
+    net2 = neat.nn.FeedForwardNetwork.create(genome2, config)
+
+    if random.random() < 0.5:
+        result = play_game_with_nets(net1, net2)
+        if result == "X":
+            return 1, -1
+        elif result == "O":
+            return -1, 1
+        else:
+            return 0.25, 0.25
+    else:
+        result = play_game_with_nets(net2, net1)
+        if result == "X":
+            return -1, 1
+        elif result == "O":
+            return 1, -1
+        else:
+            return 0.25, 0.25
+
 def eval_genomes(genomes, config):
-    genome_count = len(genomes)
-    genome_batches = [[] for _ in range(size)]
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
 
-    # Distribute genomes across MPI ranks
-    for i, genome_pair in enumerate(genomes):
-        genome_batches[i % size].append(genome_pair)
+    # Distribute genomes among processes
+    local_genomes = [g for i, g in enumerate(genomes) if i % size == rank]
+    genome_map = {g[0]: g[1] for g in genomes}
 
-    # Broadcast all genomes to all ranks
-    all_genomes = comm.bcast(genomes, root=0)
+    local_fitness = {g[0]: 0.0 for g in local_genomes}
 
-    # Each rank builds nets only for its batch
-    local_results = []
-    for i, (genome_id1, genome1) in enumerate(genome_batches[rank]):
-        net1 = neat.nn.FeedForwardNetwork.create(genome1, config)
-        for j in range(i + 1, len(all_genomes)):
-            genome_id2, genome2 = all_genomes[j]
-            net2 = neat.nn.FeedForwardNetwork.create(genome2, config)
+    for genome_id, genome in local_genomes:
+        opponents = random.sample(genomes, k=TOURNAMENT_MATCHES)
+        for opp_id, opponent in opponents:
+            if genome_id == opp_id:
+                continue
+            score1, score2 = evaluate_genome_pair(genome, opponent, config)
+            local_fitness[genome_id] += score1
 
-            if random.random() < 0.5:
-                result = play_game_with_nets(net1, net2)
-                local_results.append((genome_id1, genome_id2, result, "X"))
-            else:
-                result = play_game_with_nets(net2, net1)
-                local_results.append((genome_id1, genome_id2, result, "O"))
-
-    # Gather results from all ranks
-    all_results = comm.gather(local_results, root=0)
+    # Gather all fitnesses to rank 0
+    all_fitness = comm.gather(local_fitness, root=0)
 
     if rank == 0:
-        # Flatten and process
-        fitness = {gid: 0.0 for gid, _ in genomes}
-        for batch in all_results:
-            for gid1, gid2, result, first_player in batch:
-                if result == "draw":
-                    fitness[gid1] += 0.25
-                    fitness[gid2] += 0.25
-                elif (result == "X" and first_player == "X") or (result == "O" and first_player == "O"):
-                    fitness[gid1] += 1
-                    fitness[gid2] -= 0.5
-                else:
-                    fitness[gid2] += 1
-                    fitness[gid1] -= 0.5
-        # Assign fitness back to genomes
-        for gid, genome in genomes:
-            genome.fitness = fitness[gid]
+        total_fitness = {}
+        for fdict in all_fitness:
+            for gid, val in fdict.items():
+                total_fitness[gid] = total_fitness.get(gid, 0) + val
+        for genome_id, genome in genomes:
+            genome.fitness = total_fitness.get(genome_id, 0)
+
+def run_neat(config_path):
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+
+    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                         config_path)
+
+    p = neat.Population(config)
+
+    if rank == 0:
+        p.add_reporter(neat.StdOutReporter(True))
+        stats = neat.StatisticsReporter()
+        p.add_reporter(stats)
+
+    winner = p.run(eval_genomes, 100)
+
+    if rank == 0:
+        with open("best_genome.pkl", "wb") as f:
+            pickle.dump(winner, f)
+        print("✅ Best genome saved to best_genome.pkl")
+
+        best_net = neat.nn.FeedForwardNetwork.create(winner, config)
+        visualize_game(best_net, best_net)
 
 def visualize_game(net1, net2, delay=0.5):
     import time
@@ -157,26 +182,6 @@ def visualize_game(net1, net2, delay=0.5):
             print("\n🤝 It's a draw!")
             break
         turn += 1
-
-def run_neat(config_path):
-    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                         config_path)
-    p = neat.Population(config)
-
-    if rank == 0:
-        p.add_reporter(neat.StdOutReporter(True))
-        stats = neat.StatisticsReporter()
-        p.add_reporter(stats)
-
-    winner = p.run(eval_genomes, 200)
-
-    if rank == 0:
-        with open("best_genome.pkl", "wb") as f:
-            pickle.dump(winner, f)
-        print("✅ Best genome saved to best_genome.pkl")
-        best_net = neat.nn.FeedForwardNetwork.create(winner, config)
-        visualize_game(best_net, best_net)
 
 if __name__ == "__main__":
     local_dir = os.path.dirname(__file__)
