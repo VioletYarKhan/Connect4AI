@@ -127,7 +127,7 @@ def run_neat(config_path):
     winner = p.run(eval_genomes, 200)
 
     # Save best genome
-    with open("best_genome.pkl", "wb") as f:
+    with open(f"best_genome{JOB}.pkl", "wb") as f:
         pickle.dump(winner, f)
     print("✅ Best genome saved to best_genome.pkl")
 
