@@ -1,7 +1,7 @@
 [NEAT]
 fitness_criterion     = max
-fitness_threshold = inf
-pop_size              = 100
+fitness_threshold     = inf
+pop_size              = 400
 reset_on_extinction   = False
 
 [DefaultGenome]
@@ -36,8 +36,8 @@ conn_delete_prob        = 0.3
 enabled_default         = True
 enabled_mutate_rate     = 0.05
 
-node_add_prob           = 0.3
-node_delete_prob        = 0.3
+node_add_prob           = 0.4
+node_delete_prob        = 0.4
 
 response_init_mean      = 1.0
 response_init_stdev     = 0.0
@@ -60,7 +60,7 @@ compatibility_threshold = 3.0
 
 [DefaultStagnation]
 species_fitness_func  = max
-max_stagnation        = 100
+max_stagnation        = 300
 species_elitism       = 2
 
 [DefaultReproduction]
