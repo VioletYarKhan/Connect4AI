@@ -4,6 +4,7 @@ import neat
 import random
 import os
 import pickle
+from multiprocessing import Pool, cpu_count
 
 ROWS = 6
 COLS = 7
@@ -78,41 +79,54 @@ def play_game_with_nets(net1, net2):
             return "draw"
         turn += 1
 
+def simulate_matchup(args):
+    genome_id1, genome1, genome_id2, genome2, config = args
+    net1 = neat.nn.FeedForwardNetwork.create(genome1, config)
+    net2 = neat.nn.FeedForwardNetwork.create(genome2, config)
+
+    g1_score, g2_score = 0, 0
+
+    if random.random() < 0.5:
+        result = play_game_with_nets(net1, net2)  # net1 = X
+        if result == "X":
+            g1_score, g2_score = 1, -1
+        elif result == "O":
+            g1_score, g2_score = -1, 1
+        else:
+            g1_score = g2_score = 0.25
+    else:
+        result = play_game_with_nets(net2, net1)  # net2 = X
+        if result == "X":
+            g1_score, g2_score = -1, 1
+        elif result == "O":
+            g1_score, g2_score = 1, -1
+        else:
+            g1_score = g2_score = 0.25
+
+    return (genome_id1, g1_score), (genome_id2, g2_score)
+
 def eval_genomes(genomes, config):
     # Reset fitness
-    for genome_id, genome in genomes:
+    for _, genome in genomes:
         genome.fitness = 0
 
-    # Play round-robin matches
-    for i, (genome_id1, genome1) in enumerate(genomes):
-        net1 = neat.nn.FeedForwardNetwork.create(genome1, config)
+    matchups = []
+    for i, (id1, g1) in enumerate(genomes):
         for j in range(i + 1, len(genomes)):
-            genome_id2, genome2 = genomes[j]
-            net2 = neat.nn.FeedForwardNetwork.create(genome2, config)
+            id2, g2 = genomes[j]
+            matchups.append((id1, g1, id2, g2, config))
 
-            # Randomly assign players for fairness
-            if random.random() < 0.5:
-                result = play_game_with_nets(net1, net2)  # net1 = X, net2 = O
-                if result == "X":
-                    genome1.fitness += 1
-                    genome2.fitness -= 0.5
-                elif result == "O":
-                    genome2.fitness += 1
-                    genome1.fitness -= 0.5
-                else:
-                    genome1.fitness += 0
-                    genome2.fitness += 0
-            else:
-                result = play_game_with_nets(net2, net1)  # net2 = X, net1 = O
-                if result == "X":
-                    genome2.fitness += 1
-                    genome1.fitness -= 0.5
-                elif result == "O":
-                    genome1.fitness += 1
-                    genome2.fitness -= 0.5
-                else:
-                    genome1.fitness += 0
-                    genome2.fitness += 0
+    with Pool(cpu_count()) as pool:
+        results = pool.map(simulate_matchup, matchups)
+
+    # Aggregate fitness
+    fitness_map = {}
+    for (id1, score1), (id2, score2) in results:
+        fitness_map[id1] = fitness_map.get(id1, 0) + score1
+        fitness_map[id2] = fitness_map.get(id2, 0) + score2
+
+    for genome_id, genome in genomes:
+        genome.fitness = fitness_map.get(genome_id, 0)
 
 def run_neat(config_path):
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
@@ -134,7 +148,6 @@ def run_neat(config_path):
     # Visualize top agent vs itself
     best_net = neat.nn.FeedForwardNetwork.create(winner, config)
     visualize_game(best_net, best_net)
-
 
 def visualize_game(net1, net2, delay=0.5):
     import time
