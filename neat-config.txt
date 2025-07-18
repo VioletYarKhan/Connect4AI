@@ -2,10 +2,10 @@
 fitness_criterion     = max
 fitness_threshold     = inf
 pop_size              = 100
-reset_on_extinction   = False
+reset_on_extinction   = True
 
 [DefaultGenome]
-num_inputs              = 42
+num_inputs              = 43
 num_outputs             = 7
 num_hidden              = 0
 initial_connection      = full_direct
