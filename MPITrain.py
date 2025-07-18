@@ -9,9 +9,6 @@ from mpi4py import MPI
 ROWS = 6
 COLS = 7
 
-# --- Same game logic functions (create_board, add_piece, check_win, etc.) ---
-# (Keep your existing definitions for these)
-
 def create_board():
     return [[" " for _ in range(COLS)] for _ in range(ROWS)]
 
@@ -118,7 +115,6 @@ def eval_genomes(genomes, config):
         genome.fitness = 0
 
     if rank == 0:
-        # Prepare all matchups (only on rank 0)
         matchups = []
         for i, (id1, g1) in enumerate(genomes):
             for j in range(i + 1, len(genomes)):
@@ -127,19 +123,16 @@ def eval_genomes(genomes, config):
     else:
         matchups = None
 
-    # Scatter the matchups roughly evenly across ranks
     matchups = comm.bcast(matchups, root=0)
+
     chunk_size = math.ceil(len(matchups) / size)
     local_matchups = matchups[rank*chunk_size:(rank+1)*chunk_size]
 
-    # Each rank runs its chunk of matchups
     local_results = [simulate_matchup(m) for m in local_matchups]
 
-    # Gather all results back on rank 0
     gathered_results = comm.gather(local_results, root=0)
 
     if rank == 0:
-        # Flatten the list of lists
         all_results = [item for sublist in gathered_results for item in sublist]
 
         fitness_map = {}
@@ -150,32 +143,7 @@ def eval_genomes(genomes, config):
         for genome_id, genome in genomes:
             genome.fitness = fitness_map.get(genome_id, 0)
 
-    # Broadcast updated genomes with fitness back to all ranks (optional if needed)
     genomes = comm.bcast(genomes, root=0)
-
-def run_neat(config_path):
-    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                         config_path)
-    p = neat.Population(config)
-    p.add_reporter(neat.StdOutReporter(True))
-    stats = neat.StatisticsReporter()
-    p.add_reporter(stats)
-
-    # Run NEAT
-    winner = p.run(lambda genomes, config: eval_genomes(list(genomes), config), 5)
-
-    # Save best genome on rank 0 only
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    if rank == 0:
-        with open("best_genome.pkl", "wb") as f:
-            pickle.dump(winner, f)
-        print("✅ Best genome saved to best_genome.pkl")
-
-        # Visualize top agent vs itself
-        best_net = neat.nn.FeedForwardNetwork.create(winner, config)
-        visualize_game(best_net, best_net)
 
 def visualize_game(net1, net2, delay=0.5):
     import time
@@ -189,7 +157,6 @@ def visualize_game(net1, net2, delay=0.5):
         move = get_move_from_net(nets[current_player], board, current_player)
         add_piece(board, move, current_player)
 
-        # Print board
         print(f"\nTurn {turn+1}: Player {current_player} moves in column {move}")
         for row in board:
             print(" | ".join(row))
@@ -205,10 +172,33 @@ def visualize_game(net1, net2, delay=0.5):
             break
         turn += 1
 
+def run_neat(config_path):
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+
+    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                         config_path)
+    p = neat.Population(config)
+    p.add_reporter(neat.StdOutReporter(rank == 0))
+    stats = neat.StatisticsReporter()
+    p.add_reporter(stats)
+
+    # Wrap eval_genomes to pass genomes as list for MPI handling
+    def eval_genomes_wrapper(genomes, config):
+        eval_genomes(list(genomes), config)
+
+    winner = p.run(eval_genomes_wrapper, 5)
+
+    if rank == 0:
+        with open("best_genome.pkl", "wb") as f:
+            pickle.dump(winner, f)
+        print("✅ Best genome saved to best_genome.pkl")
+
+        best_net = neat.nn.FeedForwardNetwork.create(winner, config)
+        visualize_game(best_net, best_net)
+
 if __name__ == "__main__":
-    import sys
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, "neat-config.txt")
-
-    # Run only after mpi4py is imported and MPI is initialized
     run_neat(config_path)
