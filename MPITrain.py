@@ -1,3 +1,5 @@
+# MPITrain.py
+
 import math
 import numpy as np
 import neat
@@ -40,16 +42,10 @@ def check_win(board):
     return 0
 
 def board_to_input(board, player):
-    inputs = []
-    for row in board:
-        for cell in row:
-            if cell == player:
-                inputs.append(1.0)
-            elif cell == " ":
-                inputs.append(0.0)
-            else:
-                inputs.append(-1.0)
-    return inputs
+    return [
+        1.0 if cell == player else -1.0 if cell != " " else 0.0
+        for row in board for cell in row
+    ]
 
 def get_valid_columns(board):
     return [c for c in range(COLS) if board[0][c] == " "]
@@ -83,32 +79,21 @@ def play_game_with_nets(net1, net2):
 def evaluate_genome_pair(genome1, genome2, config):
     net1 = neat.nn.FeedForwardNetwork.create(genome1, config)
     net2 = neat.nn.FeedForwardNetwork.create(genome2, config)
-
     if random.random() < 0.5:
         result = play_game_with_nets(net1, net2)
-        if result == "X":
-            return 1, -1
-        elif result == "O":
-            return -1, 1
-        else:
-            return 0.25, 0.25
+        return (1, -1) if result == "X" else (-1, 1) if result == "O" else (0.25, 0.25)
     else:
         result = play_game_with_nets(net2, net1)
-        if result == "X":
-            return -1, 1
-        elif result == "O":
-            return 1, -1
-        else:
-            return 0.25, 0.25
+        return (-1, 1) if result == "X" else (1, -1) if result == "O" else (0.25, 0.25)
 
-def evaluate_batch(genomes_data, config_data):
+def evaluate_batch(genomes_data, config_path):
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                         config_data)
+                         config_path)
     id_to_genome = {gid: genome for gid, genome in genomes_data}
     local_fitness = {gid: 0.0 for gid, _ in genomes_data}
-
     genome_ids = list(id_to_genome.keys())
+
     for gid, genome in genomes_data:
         for _ in range(TOURNAMENT_MATCHES):
             opponent_id = random.choice(genome_ids)
@@ -117,7 +102,6 @@ def evaluate_batch(genomes_data, config_data):
             opponent = id_to_genome[opponent_id]
             score1, score2 = evaluate_genome_pair(genome, opponent, config)
             local_fitness[gid] += score1
-
     return local_fitness
 
 def eval_genomes(genomes, config):
@@ -125,26 +109,24 @@ def eval_genomes(genomes, config):
     rank = comm.Get_rank()
     size = comm.Get_size()
 
+    config_path = config.filename
     genome_data = [(gid, genome) for gid, genome in genomes]
-    chunks = [genome_data[i::size] for i in range(size)]
+
+    # Split only on rank 0
+    chunks = [genome_data[i::size] for i in range(size)] if rank == 0 else None
     local_chunk = comm.scatter(chunks, root=0)
 
-    # Broadcast config file path instead of config object (simpler to re-load)
-    config_path = config.filename
     config_path = comm.bcast(config_path, root=0)
-
     local_result = evaluate_batch(local_chunk, config_path)
     all_results = comm.gather(local_result, root=0)
 
-    # Rank 0 combines and sets fitness
     total_fitness = {}
     if rank == 0:
-        for partial in all_results:
-            for gid, score in partial.items():
+        for result in all_results:
+            for gid, score in result.items():
                 total_fitness[gid] = total_fitness.get(gid, 0.0) + score
 
     total_fitness = comm.bcast(total_fitness, root=0)
-
     for gid, genome in genomes:
         genome.fitness = total_fitness.get(gid, 0.0)
 
@@ -154,18 +136,15 @@ def visualize_game(net1, net2, delay=0.5):
     players = ["X", "O"]
     nets = {"X": net1, "O": net2}
     turn = 0
-
     while True:
         current_player = players[turn % 2]
         move = get_move_from_net(nets[current_player], board, current_player)
         add_piece(board, move, current_player)
-
         print(f"\nTurn {turn+1}: Player {current_player} moves in column {move}")
         for row in board:
             print(" | ".join(row))
         print("-" * 29)
         time.sleep(delay)
-
         winner = check_win(board)
         if winner:
             print(f"\n🎉 Player {winner} wins!")
@@ -198,9 +177,9 @@ def run_neat(config_path):
         best_net = neat.nn.FeedForwardNetwork.create(winner, config)
         visualize_game(best_net, best_net)
     else:
-        # Workers loop forever in evaluation
+        # Standby mode: always participate in eval
         while True:
-            eval_genomes(None, config)
+            eval_genomes([], config)
 
 if __name__ == "__main__":
     local_dir = os.path.dirname(__file__)
