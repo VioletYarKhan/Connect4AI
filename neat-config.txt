@@ -8,7 +8,7 @@ reset_on_extinction   = True
 num_inputs              = 42
 num_outputs             = 7
 num_hidden              = 5
-initial_connection      = partial_nodirect 
+initial_connection      = partial_nodirect 1.0
 feed_forward            = True
 
 activation_default      = sigmoid
