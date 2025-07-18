@@ -138,7 +138,7 @@ def run_neat(config_path):
     p.add_reporter(stats)
 
     # Run NEAT
-    winner = p.run(eval_genomes, 20)
+    winner = p.run(eval_genomes, 5)
 
     # Save best genome
     with open("best_genome.pkl", "wb") as f:
