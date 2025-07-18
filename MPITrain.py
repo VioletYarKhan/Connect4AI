@@ -3,6 +3,7 @@ import neat
 import random
 import pickle
 from mpi4py import MPI
+import os
 
 ROWS = 6
 COLS = 7
@@ -130,7 +131,7 @@ def eval_genomes(genomes, config):
         comm.send(results, dest=0)
 
 # Run NEAT with MPI tournament evaluation
-def run_neat():
+def run_neat(config_path):
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
 
@@ -139,7 +140,7 @@ def run_neat():
         neat.DefaultReproduction,
         neat.DefaultSpeciesSet,
         neat.DefaultStagnation,
-        "neat-config",
+        config_path,
     )
 
     if rank == 0:
@@ -160,4 +161,6 @@ def run_neat():
     comm.Barrier()
 
 if __name__ == "__main__":
-    run_neat()
+    local_dir = os.path.dirname(__file__)
+    config_path = os.path.join(local_dir, "neat-config.txt")
+    run_neat(config_path)
