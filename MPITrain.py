@@ -8,11 +8,9 @@ import os
 ROWS = 6
 COLS = 7
 
-# Create empty board
 def create_board():
     return [[" " for _ in range(COLS)] for _ in range(ROWS)]
 
-# Drop a piece into a column
 def add_piece(board, col, player):
     for row in reversed(board):
         if row[col] == " ":
@@ -20,7 +18,6 @@ def add_piece(board, col, player):
             return True
     return False
 
-# Check for a win
 def check_win(board):
     for row in range(ROWS):
         for col in range(COLS - 3):
@@ -40,13 +37,10 @@ def check_win(board):
                 return board[row][col]
     return None
 
-# Check if board is full
 def is_full(board):
     return all(cell != " " for row in board for cell in row)
 
-# Get input features for a board and player
 def get_inputs(board, player):
-    enemy = "O" if player == "X" else "X"
     flat = []
     for row in board:
         for cell in row:
@@ -56,9 +50,9 @@ def get_inputs(board, player):
                 flat.append(1.0)
             else:
                 flat.append(-1.0)
-    return flat + [1.0 if player == "X" else -1.0]
+    flat.append(1.0 if player == "X" else -1.0)
+    return flat
 
-# Get the move from a genome's output
 def get_move(net, board, player):
     inputs = get_inputs(board, player)
     outputs = net.activate(inputs)
@@ -66,12 +60,9 @@ def get_move(net, board, player):
     for col, _ in sorted_moves:
         if board[0][col] == " ":
             return col
-    return None  # No valid move
+    return None
 
-# Play one game between two genomes
-def play_game(genome1, genome2, config):
-    net1 = neat.nn.FeedForwardNetwork.create(genome1, config)
-    net2 = neat.nn.FeedForwardNetwork.create(genome2, config)
+def play_game(net1, net2):
     board = create_board()
     turn = 0
     players = [("X", net1), ("O", net2)]
@@ -84,53 +75,54 @@ def play_game(genome1, genome2, config):
         if winner:
             return 0 if winner == "X" else 1
         if is_full(board):
-            return 0.5  # Draw
+            return 0.5
         turn += 1
 
-# Evaluate genomes in parallel using tournament play
-def eval_genomes(genomes, config):
+# Master process: assign work and collect scores
+def master_eval_genomes(genomes, config):
     comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
     size = comm.Get_size()
 
-    if rank == 0:
-        n = len(genomes)
-        scores = [0.0] * n
-        matchups = [(i, j) for i in range(n) for j in range(i+1, n)]
-        chunk_size = len(matchups) // (size - 1) + 1
-        chunks = [matchups[i:i+chunk_size] for i in range(0, len(matchups), chunk_size)]
+    nets = [neat.nn.FeedForwardNetwork.create(g, config) for _, g in genomes]
+    scores = [0.0 for _ in genomes]
+    matchups = [(i, j) for i in range(len(genomes)) for j in range(i+1, len(genomes))]
+    chunks = [matchups[i::size - 1] for i in range(size - 1)]
 
-        # Send matchups to workers
-        for i in range(1, size):
-            comm.send(chunks[i-1] if i-1 < len(chunks) else [], dest=i)
+    # Send data to workers
+    for worker in range(1, size):
+        data = {
+            "chunk": chunks[worker - 1],
+            "nets": [(i, pickle.dumps(nets[i])) for i in set(i for pair in chunks[worker - 1] for i in pair)],
+        }
+        comm.send(data, dest=worker)
 
-        # Receive results
-        for i in range(1, size):
-            results = comm.recv(source=i)
-            for i1, i2, outcome in results:
-                if outcome == 0:
-                    scores[i1] += 1
-                elif outcome == 1:
-                    scores[i2] += 1
-                else:
-                    scores[i1] += 0.5
-                    scores[i2] += 0.5
+    # Collect results
+    for _ in range(1, size):
+        results = comm.recv(source=MPI.ANY_SOURCE)
+        for i1, i2, outcome in results:
+            if outcome == 0:
+                scores[i1] += 1
+            elif outcome == 1:
+                scores[i2] += 1
+            else:
+                scores[i1] += 0.5
+                scores[i2] += 0.5
 
-        # Assign fitness
-        for i, (_, g) in enumerate(genomes):
-            g.fitness = scores[i]
+    # Assign fitness
+    for i, (_, g) in enumerate(genomes):
+        g.fitness = scores[i]
 
-    else:
-        received = comm.recv(source=0)
-        results = []
-        for i1, i2 in received:
-            g1 = genomes[i1][1]
-            g2 = genomes[i2][1]
-            outcome = play_game(g1, g2, config)
-            results.append((i1, i2, outcome))
-        comm.send(results, dest=0)
+# Worker loop: receive matchups and return results
+def worker_loop(config):
+    comm = MPI.COMM_WORLD
+    data = comm.recv(source=0)
+    nets = {i: pickle.loads(b) for i, b in data["nets"]}
+    results = []
+    for i1, i2 in data["chunk"]:
+        outcome = play_game(nets[i1], nets[i2])
+        results.append((i1, i2, outcome))
+    comm.send(results, dest=0)
 
-# Run NEAT with MPI tournament evaluation
 def run_neat(config_path):
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -146,19 +138,13 @@ def run_neat(config_path):
     if rank == 0:
         p = neat.Population(config)
         p.add_reporter(neat.StdOutReporter(True))
-        stats = neat.StatisticsReporter()
-        p.add_reporter(stats)
-
-        winner = p.run(eval_genomes, 50)
-
+        p.add_reporter(neat.StatisticsReporter())
+        winner = p.run(lambda genomes, config: master_eval_genomes(genomes, config), 50)
         with open("best_genome.pkl", "wb") as f:
             pickle.dump(winner, f)
         print("✅ Best genome saved to best_genome.pkl")
     else:
-        # Workers do nothing outside eval_genomes
-        pass
-
-    comm.Barrier()
+        worker_loop(config)
 
 if __name__ == "__main__":
     local_dir = os.path.dirname(__file__)
