@@ -130,30 +130,6 @@ def eval_genomes(genomes, config):
     for gid, genome in genomes:
         genome.fitness = total_fitness.get(gid, 0.0)
 
-def visualize_game(net1, net2, delay=0.5):
-    import time
-    board = create_board()
-    players = ["X", "O"]
-    nets = {"X": net1, "O": net2}
-    turn = 0
-    while True:
-        current_player = players[turn % 2]
-        move = get_move_from_net(nets[current_player], board, current_player)
-        add_piece(board, move, current_player)
-        print(f"\nTurn {turn+1}: Player {current_player} moves in column {move}")
-        for row in board:
-            print(" | ".join(row))
-        print("-" * 29)
-        time.sleep(delay)
-        winner = check_win(board)
-        if winner:
-            print(f"\n🎉 Player {winner} wins!")
-            break
-        if all(board[0][c] != " " for c in range(COLS)):
-            print("\n🤝 It's a draw!")
-            break
-        turn += 1
-
 def run_neat(config_path):
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -173,9 +149,6 @@ def run_neat(config_path):
         with open("best_genome.pkl", "wb") as f:
             pickle.dump(winner, f)
         print("✅ Best genome saved to best_genome.pkl")
-
-        best_net = neat.nn.FeedForwardNetwork.create(winner, config)
-        visualize_game(best_net, best_net)
     else:
         # Standby mode: always participate in eval
         while True:
