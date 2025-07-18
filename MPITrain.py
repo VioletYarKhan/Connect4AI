@@ -109,7 +109,7 @@ def eval_genomes(genomes, config):
     rank = comm.Get_rank()
     size = comm.Get_size()
 
-    config_path = config.filename
+    config_path = os.path.join(local_dir, "neat-config.txt")
     genome_data = [(gid, genome) for gid, genome in genomes]
 
     # Split only on rank 0
