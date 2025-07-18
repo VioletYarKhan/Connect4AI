@@ -35,23 +35,24 @@ def check_win(board):
                 return board[row][col]
     return 0
 
-def board_to_input(board, player_char):
-    inputs = []
+def get_inputs(board, player):
+    flat = []
     for row in board:
         for cell in row:
-            if cell == player_char:
-                inputs.append(1.0)
-            elif cell == " ":
-                inputs.append(0.0)
+            if cell == " ":
+                flat.append(0.0)
+            elif cell == player:
+                flat.append(1.0)
             else:
-                inputs.append(-1.0)
-    return inputs
+                flat.append(-1.0)
+    flat.append(1.0 if player == "X" else -1.0)  # Turn indicator
+    return flat
 
 def get_valid_columns(board):
     return [c for c in range(COLS) if board[0][c] == " "]
 
-def get_move_from_net(net, board, player_char):
-    inputs = board_to_input(board, player_char)
+def get_move_from_net(net, board, player):
+    inputs = get_inputs(board, player)
     outputs = net.activate(inputs)
     valid_columns = get_valid_columns(board)
     sorted_indices = sorted(range(len(outputs)), key=lambda i: outputs[i], reverse=True)
@@ -67,18 +68,15 @@ def print_board(board):
     print("-" * 29)
 
 def play_against_genome(config_path, genome_path):
-    # Load config
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
 
-    # Load genome
     with open(genome_path, "rb") as f:
         genome = pickle.load(f)
 
     net = neat.nn.FeedForwardNetwork.create(genome, config)
 
-    # Choose side
     while True:
         player_char = input("Do you want to play first (X) or second (O)? ").upper()
         if player_char in ["X", "O"]:
@@ -124,7 +122,6 @@ def play_against_genome(config_path, genome_path):
             break
 
         turn += 1
-
 
 if __name__ == "__main__":
     config_file = "neat-config.txt"
