@@ -8,7 +8,7 @@ from mpi4py import MPI
 
 ROWS = 6
 COLS = 7
-TOURNAMENT_MATCHES = 5  # matches per genome
+TOURNAMENT_MATCHES = 5
 
 def create_board():
     return [[" " for _ in range(COLS)] for _ in range(ROWS)]
@@ -101,60 +101,52 @@ def evaluate_genome_pair(genome1, genome2, config):
         else:
             return 0.25, 0.25
 
+def evaluate_batch(genomes_data, config_data):
+    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                         config_data)
+    id_to_genome = {gid: genome for gid, genome in genomes_data}
+    local_fitness = {gid: 0.0 for gid, _ in genomes_data}
+
+    genome_ids = list(id_to_genome.keys())
+    for gid, genome in genomes_data:
+        for _ in range(TOURNAMENT_MATCHES):
+            opponent_id = random.choice(genome_ids)
+            if opponent_id == gid:
+                continue
+            opponent = id_to_genome[opponent_id]
+            score1, score2 = evaluate_genome_pair(genome, opponent, config)
+            local_fitness[gid] += score1
+
+    return local_fitness
+
 def eval_genomes(genomes, config):
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
 
-    # Distribute genomes among processes
-    local_genomes = [g for i, g in enumerate(genomes) if i % size == rank]
-    genome_map = {g[0]: g[1] for g in genomes}
+    genome_data = [(gid, genome) for gid, genome in genomes]
+    chunks = [genome_data[i::size] for i in range(size)]
+    local_chunk = comm.scatter(chunks, root=0)
 
-    local_fitness = {g[0]: 0.0 for g in local_genomes}
+    # Broadcast config file path instead of config object (simpler to re-load)
+    config_path = config.filename
+    config_path = comm.bcast(config_path, root=0)
 
-    for genome_id, genome in local_genomes:
-        opponents = random.sample(genomes, k=TOURNAMENT_MATCHES)
-        for opp_id, opponent in opponents:
-            if genome_id == opp_id:
-                continue
-            score1, score2 = evaluate_genome_pair(genome, opponent, config)
-            local_fitness[genome_id] += score1
+    local_result = evaluate_batch(local_chunk, config_path)
+    all_results = comm.gather(local_result, root=0)
 
-    # Gather all fitnesses to rank 0
-    all_fitness = comm.gather(local_fitness, root=0)
-
+    # Rank 0 combines and sets fitness
+    total_fitness = {}
     if rank == 0:
-        total_fitness = {}
-        for fdict in all_fitness:
-            for gid, val in fdict.items():
-                total_fitness[gid] = total_fitness.get(gid, 0) + val
-        for genome_id, genome in genomes:
-            genome.fitness = total_fitness.get(genome_id, 0)
+        for partial in all_results:
+            for gid, score in partial.items():
+                total_fitness[gid] = total_fitness.get(gid, 0.0) + score
 
-def run_neat(config_path):
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
+    total_fitness = comm.bcast(total_fitness, root=0)
 
-    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                         config_path)
-
-    p = neat.Population(config)
-
-    if rank == 0:
-        p.add_reporter(neat.StdOutReporter(True))
-        stats = neat.StatisticsReporter()
-        p.add_reporter(stats)
-
-    winner = p.run(eval_genomes, 100)
-
-    if rank == 0:
-        with open("best_genome.pkl", "wb") as f:
-            pickle.dump(winner, f)
-        print("✅ Best genome saved to best_genome.pkl")
-
-        best_net = neat.nn.FeedForwardNetwork.create(winner, config)
-        visualize_game(best_net, best_net)
+    for gid, genome in genomes:
+        genome.fitness = total_fitness.get(gid, 0.0)
 
 def visualize_game(net1, net2, delay=0.5):
     import time
@@ -182,6 +174,33 @@ def visualize_game(net1, net2, delay=0.5):
             print("\n🤝 It's a draw!")
             break
         turn += 1
+
+def run_neat(config_path):
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+
+    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                         config_path)
+
+    if rank == 0:
+        p = neat.Population(config)
+        p.add_reporter(neat.StdOutReporter(True))
+        stats = neat.StatisticsReporter()
+        p.add_reporter(stats)
+
+        winner = p.run(eval_genomes, 100)
+
+        with open("best_genome.pkl", "wb") as f:
+            pickle.dump(winner, f)
+        print("✅ Best genome saved to best_genome.pkl")
+
+        best_net = neat.nn.FeedForwardNetwork.create(winner, config)
+        visualize_game(best_net, best_net)
+    else:
+        # Workers loop forever in evaluation
+        while True:
+            eval_genomes(None, config)
 
 if __name__ == "__main__":
     local_dir = os.path.dirname(__file__)
