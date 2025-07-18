@@ -153,7 +153,11 @@ def run_neat(config_path):
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
     p = neat.Population(config)
-    p.add_reporter(neat.StdOutReporter(rank == 0))
+    if rank == 0:
+        p.add_reporter(neat.StdOutReporter(True))
+    else:
+        # Optionally, add a dummy reporter or no reporter at all
+        pass
     stats = neat.StatisticsReporter()
     p.add_reporter(stats)
 
@@ -161,7 +165,7 @@ def run_neat(config_path):
     def eval_genomes_wrapper(genomes, config):
         eval_genomes(list(genomes), config)
 
-    winner = p.run(eval_genomes_wrapper, 5)
+    winner = p.run(eval_genomes_wrapper, 2000)
 
     if rank == 0:
         with open("best_genome.pkl", "wb") as f:
